@@ -1,0 +1,11 @@
+{
+  "printWidth": 100,
+  "singleQuote": true,
+  "quoteProps": "consistent",
+  "experimentalOperatorPosition": "start",
+  "plugins": ["prettier-plugin-jsdoc"],
+  "jsdocPrintWidth": 80,
+  "tsdoc": true,
+  "jsdocSeparateReturnsFromParam": true,
+  "jsdocPreferCodeFences": true
+}

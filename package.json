@@ -1,0 +1,52 @@
+{
+  "name": "kysely-cloudflare",
+  "type": "module",
+  "version": "0.0.0",
+  "description": "Kysely dialect for CloudFlare SQLite Durable Objects and CloudFlare D1",
+  "author": "rc4 <dh@rc4.io>",
+  "license": "Artistic-2.0",
+  "homepage": "https://github.com/rc4/kysely-cloudflare#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rc4/kysely-cloudflare.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rc4/kysely-cloudflare/issues"
+  },
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit",
+    "release": "bumpp --pr",
+    "prepublishOnly": "pnpm run build",
+    "format": "prettier -w .",
+    "format:check": "prettier -c .",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261001.1",
+    "@types/node": "^26.6.3",
+    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/ui": "^4.1.11",
+    "bumpp": "^12.3.0",
+    "kysely": "^0.29.6",
+    "oxlint": "^1.86.0",
+    "prettier": "^3.9.9",
+    "prettier-plugin-jsdoc": "^1.8.1",
+    "tsdown": "^0.23.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  },
+  "peerDependencies": {
+    "kysely": "*"
+  }
+}

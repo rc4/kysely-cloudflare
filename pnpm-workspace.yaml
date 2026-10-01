@@ -1,0 +1,3 @@
+minimumReleaseAge: 540
+trustPolicy: no-downgrade
+trustPolicyIgnoreAfter: 14400
