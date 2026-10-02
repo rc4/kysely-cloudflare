@@ -1,3 +1,6 @@
 minimumReleaseAge: 540
 trustPolicy: no-downgrade
 trustPolicyIgnoreAfter: 14400
+allowBuilds:
+  esbuild: true
+  workerd: true

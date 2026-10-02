@@ -1,4 +1,7 @@
 node_modules
 dist
+coverage
+artifacts
+.wrangler
 *.log
 .DS_Store

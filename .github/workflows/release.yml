@@ -1,0 +1,125 @@
+name: Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [master]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.package.outputs.artifact-id }}
+      npm-tag: ${{ steps.version.outputs.npm-tag }}
+      pnpm-version: ${{ steps.version.outputs.pnpm-version }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          persist-credentials: false
+      - uses: pnpm/setup@v3 # immutable tag
+        with:
+          runtime: node@24
+          require-lockfile: true
+      - name: Verify release version
+        id: version
+        env:
+          RELEASE_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          version=$(jq -r .version package.json)
+          if [ "$RELEASE_BRANCH" != "release/v$version" ]; then
+            echo "::error::Branch $RELEASE_BRANCH doesn't match package.json version $version"
+            exit 1
+          fi
+          case "$version" in *-*) npm_tag=next ;; *) npm_tag=latest ;; esac
+          {
+            echo "version=$version"
+            echo "npm-tag=$npm_tag"
+            echo "pnpm-version=$(pnpm --version)"
+          } >> "$GITHUB_OUTPUT"
+      - run: pnpm check
+      - name: Pack the validated package
+        run: |
+          mkdir -p artifacts
+          pnpm pack --pack-destination artifacts
+      - id: package
+        uses: actions/upload-artifact@v7
+        with:
+          path: artifacts/*.tgz
+          archive: false
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          path: artifacts
+          digest-mismatch: error
+      - uses: pnpm/setup@v3 # immutable tag
+        with:
+          version: ${{ needs.build.outputs.pnpm-version }}
+          runtime: node@24
+          install: false
+      - name: Tag the validated merge commit
+        uses: actions/github-script@v9
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        with:
+          script: |
+            const ref = `tags/v${process.env.RELEASE_VERSION}`;
+            const sha = context.payload.pull_request.merge_commit_sha;
+            let existing;
+            try {
+              ({ data: existing } = await github.rest.git.getRef({ ...context.repo, ref }));
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            if (existing) {
+              if (existing.object.sha !== sha) {
+                throw new Error('Release tag already points to a different commit');
+              }
+            } else {
+              await github.rest.git.createRef({ ...context.repo, ref: `refs/${ref}`, sha });
+            }
+      - name: Attest the package tarball
+        uses: actions/attest@v4
+        with:
+          subject-path: artifacts/*.tgz
+      - name: Publish with npm trusted publishing
+        env:
+          NPM_TAG: ${{ needs.build.outputs.npm-tag }}
+        run: pnpm publish artifacts/*.tgz --ignore-scripts --no-git-checks --registry https://registry.npmjs.org --provenance --tag "$NPM_TAG"
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          NPM_TAG: ${{ needs.build.outputs.npm-tag }}
+        run: |
+          prerelease=()
+          if [ "$NPM_TAG" = next ]; then prerelease=(--prerelease); fi
+          gh release create "v$RELEASE_VERSION" artifacts/*.tgz \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes "${prerelease[@]}"
