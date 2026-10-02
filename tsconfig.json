@@ -1,17 +1,12 @@
 {
   "compilerOptions": {
     "target": "esnext",
-    "lib": ["es2023"],
-    "moduleDetection": "force",
+    "lib": ["es2024"],
     "module": "preserve",
     "moduleResolution": "bundler",
-    "resolveJsonModule": true,
-    "types": ["node", "@cloudflare/workers-types/experimental"],
+    "types": [],
     "strict": true,
     "noUnusedLocals": true,
-    "declaration": true,
-    "emitDeclarationOnly": true,
-    "esModuleInterop": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true

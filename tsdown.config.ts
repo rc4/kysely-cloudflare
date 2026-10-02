@@ -2,10 +2,8 @@ import { defineConfig } from 'tsdown';
 
 export default defineConfig({
   format: ['esm', 'cjs'],
-  dts: true,
   exports: true,
   sourcemap: true,
-  deps: {
-    neverBundle: ['kysely'],
-  },
+  publint: true,
+  attw: { profile: 'node16', level: 'error' },
 });

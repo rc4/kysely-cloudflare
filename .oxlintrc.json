@@ -8,8 +8,5 @@
   },
   "rules": {
     "no-unused-vars": "allow"
-  },
-  "env": {
-    "builtin": true
   }
 }

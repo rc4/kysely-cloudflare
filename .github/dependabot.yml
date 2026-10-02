@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cloudflare-testing:
+        patterns: ['@cloudflare/vitest-plugin', '@cloudflare/workers-types', 'miniflare']
+      vitest:
+        patterns: ['vitest', '@vitest/*']
+      tooling:
+        patterns: ['*']
+        update-types: [minor, patch]
