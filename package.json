@@ -1,7 +1,7 @@
 {
   "name": "kysely-cloudflare",
   "type": "module",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0",
   "description": "Kysely dialects for Cloudflare D1 and SQLite-backed Durable Objects",
   "keywords": [
     "kysely",
