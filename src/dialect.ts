@@ -9,7 +9,7 @@ import {
   type MigrationLockOptions,
   type QueryCompiler,
 } from 'kysely';
-import { isStorage } from './connection';
+import { isD1, isStorage } from './connection';
 import { CloudflareDriver } from './driver';
 import { CloudflareIntrospector } from './introspector';
 import type {
@@ -20,17 +20,22 @@ import type {
   SqlStorageLike,
 } from './types';
 
-class CloudflareAdapter extends SqliteAdapter {
-  readonly #locks = new WeakSet<Kysely<any>>();
-  readonly #transactionalDdl: () => boolean;
+// Keyed by SqlStorage, so Kysely instances on ctx.storage and ctx.storage.sql
+// share one lock.
+const durableObjectLocks = new WeakMap<SqlStorageLike, Promise<void>>();
 
-  constructor(transactionalDdl: () => boolean) {
+class CloudflareAdapter extends SqliteAdapter {
+  readonly #held = new WeakMap<Kysely<any>, () => Promise<void>>();
+  readonly #database: () => CloudflareDatabase | undefined;
+
+  constructor(database: () => CloudflareDatabase | undefined) {
     super();
-    this.#transactionalDdl = transactionalDdl;
+    this.#database = database;
   }
 
   override get supportsTransactionalDdl(): boolean {
-    return this.#transactionalDdl();
+    const database = this.#database();
+    return database !== undefined && isStorage(database);
   }
 
   // The driver serializes connections itself. Kysely's single-connection mutex
@@ -45,6 +50,19 @@ class CloudflareAdapter extends SqliteAdapter {
     db: Kysely<any>,
     options: MigrationLockOptions,
   ): Promise<void> {
+    const database = this.#database()!;
+    if (!isD1(database)) {
+      // A Durable Object has one live instance, so an in-memory lock covers
+      // every migrator that can reach its storage. Unlike the lock row, it
+      // can't outlive an eviction or crash and block every later run.
+      const sql = isStorage(database) ? database.sql : database;
+      const previous = durableObjectLocks.get(sql);
+      const released = Promise.withResolvers<void>();
+      durableObjectLocks.set(sql, released.promise);
+      await previous;
+      this.#held.set(db, async () => released.resolve());
+      return;
+    }
     const result = await db
       .updateTable(options.lockTable)
       .set({ is_locked: 1 })
@@ -52,24 +70,25 @@ class CloudflareAdapter extends SqliteAdapter {
       .where('is_locked', '=', 0)
       .executeTakeFirst();
     if (result.numUpdatedRows !== 1n) {
-      throw new Error('Migration lock is already held by another migrator');
+      throw new Error(
+        `Migration lock is already held by another migrator. If none is running, one stopped mid-run: check which migrations were applied, then set ${options.lockTable}.is_locked to 0.`,
+      );
     }
-    this.#locks.add(db);
+    this.#held.set(db, async () => {
+      await db
+        .updateTable(options.lockTable)
+        .set({ is_locked: 0 })
+        .where('id', '=', options.lockRowId)
+        .execute();
+    });
   }
 
-  override async releaseMigrationLock(
-    db: Kysely<any>,
-    options: MigrationLockOptions,
-  ): Promise<void> {
+  override async releaseMigrationLock(db: Kysely<any>): Promise<void> {
     // Kysely also calls this when acquiring failed; don't clear another
     // migrator's lock.
-    if (!this.#locks.has(db)) return;
-    await db
-      .updateTable(options.lockTable)
-      .set({ is_locked: 0 })
-      .where('id', '=', options.lockRowId)
-      .execute();
-    this.#locks.delete(db);
+    const release = this.#held.get(db);
+    this.#held.delete(db);
+    await release?.();
   }
 }
 
@@ -104,8 +123,8 @@ export class CloudflareDialect implements Dialect {
   }
 
   createAdapter(): DialectAdapter {
-    // Kysely reads this after the driver initializes.
-    return new CloudflareAdapter(() => this.#database !== undefined && isStorage(this.#database));
+    // Kysely reads the database after the driver initializes.
+    return new CloudflareAdapter(() => this.#database);
   }
 
   createIntrospector(db: Kysely<any>): DatabaseIntrospector {

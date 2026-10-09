@@ -94,6 +94,35 @@ test('custom migration table names route history and lock writes to the requeste
   }
 });
 
+test('concurrent Durable Object migrators wait for each other instead of failing', async () => {
+  const storage = new SQLiteStorage();
+  const databases = [
+    new Kysely({ dialect: new CloudflareDialect({ database: storage }) }),
+    new Kysely({ dialect: new CloudflareDialect({ database: storage.sql }) }),
+  ];
+  const up = vi.fn<(db: Kysely<any>) => Promise<void>>(async (migrationDb) => {
+    await migrationDb.schema.createTable('example').addColumn('id', 'integer').execute();
+  });
+  try {
+    const results = await Promise.all(
+      databases.map((db) =>
+        new Migrator({
+          db,
+          provider: { getMigrations: async () => ({ '001': { up } }) },
+        }).migrateToLatest(),
+      ),
+    );
+    expect(results.map((result) => result.error)).toEqual([undefined, undefined]);
+    expect(up).toHaveBeenCalledOnce();
+    expect(
+      results.flatMap((result) => result.results ?? []).map((result) => result.status),
+    ).toEqual(['Success']);
+  } finally {
+    await Promise.all(databases.map((db) => db.destroy()));
+    storage.database.close();
+  }
+});
+
 test('native controlled transaction start failure releases its lease and allows retry', async () => {
   const storage = new SQLiteStorage();
   const transaction = vi
