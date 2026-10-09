@@ -51,6 +51,8 @@ function isMutation(query: CompiledQuery): boolean {
 }
 
 function d1Result<R>(query: CompiledQuery, result: D1ResultLike<R>): QueryResult<R> {
+  // Match the Durable Object path: reads don't report affected rows.
+  if (!isMutation(query) && result.meta.changes === 0) return { rows: result.results };
   return {
     rows: result.results,
     numAffectedRows: BigInt(result.meta.changes),

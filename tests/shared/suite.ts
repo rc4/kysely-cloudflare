@@ -66,6 +66,17 @@ export function databaseSuite(
   const transactions = binding === 'storage';
   // oxlint-disable-next-line vitest/valid-title
   describe(suiteName, () => {
+    test('reads omit affected-row counts and raw writes report them', async () =>
+      run(async (db) => {
+        const select = await db.executeQuery(db.selectFrom('cats').selectAll().compile());
+        expect(select).toEqual({ rows: [] });
+        const write = await sql`insert into cats (name, active) values ('King Kibby', 1)`.execute(
+          db,
+        );
+        expect(write.numAffectedRows).toBe(1n);
+        expect((await sql`select name from cats`.execute(db)).numAffectedRows).toBeUndefined();
+      }));
+
     if (binding === 'sql') {
       test('ctx.storage.sql executes bound queries and exposes table metadata', async () =>
         run(async (db) => {
