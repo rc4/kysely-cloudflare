@@ -383,24 +383,34 @@ export function databaseSuite(
         expect((await migrator.migrateToLatest()).error).toBeUndefined();
       }));
 
-    test("a rejected migrator preserves another migrator's lock", async () =>
-      run(async (db) => {
-        const migrator = new Migrator({ db, provider: { getMigrations: async () => ({}) } });
-        expect((await migrator.migrateToLatest()).error).toBeUndefined();
-        await sql`update kysely_migration_lock set is_locked = 1`.execute(db);
-        expect((await migrator.migrateToLatest()).error).toEqual(
-          new Error('Migration lock is already held by another migrator'),
-        );
-        expect(
-          (
-            await sql<{ is_locked: number }>`select is_locked from kysely_migration_lock`.execute(
-              db,
-            )
-          ).rows,
-        ).toEqual([{ is_locked: 1 }]);
-        await sql`update kysely_migration_lock set is_locked = 0`.execute(db);
-        expect((await migrator.migrateToLatest()).error).toBeUndefined();
-      }));
+    if (binding === 'd1') {
+      test("a rejected migrator preserves another migrator's lock", async () =>
+        run(async (db) => {
+          const migrator = new Migrator({ db, provider: { getMigrations: async () => ({}) } });
+          expect((await migrator.migrateToLatest()).error).toBeUndefined();
+          await sql`update kysely_migration_lock set is_locked = 1`.execute(db);
+          expect(String((await migrator.migrateToLatest()).error)).toContain(
+            'Migration lock is already held by another migrator',
+          );
+          expect(
+            (
+              await sql<{ is_locked: number }>`select is_locked from kysely_migration_lock`.execute(
+                db,
+              )
+            ).rows,
+          ).toEqual([{ is_locked: 1 }]);
+          await sql`update kysely_migration_lock set is_locked = 0`.execute(db);
+          expect((await migrator.migrateToLatest()).error).toBeUndefined();
+        }));
+    } else {
+      test('a lock row left by a crashed migrator does not block Durable Objects', async () =>
+        run(async (db) => {
+          const migrator = new Migrator({ db, provider: { getMigrations: async () => ({}) } });
+          expect((await migrator.migrateToLatest()).error).toBeUndefined();
+          await sql`update kysely_migration_lock set is_locked = 1`.execute(db);
+          expect((await migrator.migrateToLatest()).error).toBeUndefined();
+        }));
+    }
 
     if (transactions) {
       test('batch joins an outer transaction and rolls back with it', async () =>

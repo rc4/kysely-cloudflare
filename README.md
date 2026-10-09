@@ -118,9 +118,14 @@ Result plugins run after the batch commits, so a plugin that throws can't undo t
 
 ### Migrations
 
-Kysely's `Migrator` (from `kysely/migration`) works as usual. It holds a lock in the database while it runs, so a second migrator started at the same time fails instead of waiting.
+Kysely's `Migrator` (from `kysely/migration`) works as usual, with a lock so that two migrators never run at once:
 
-With `ctx.storage`, each run happens in one transaction. D1 and `ctx.storage.sql` don't have transactions, so a migration that fails partway through can leave some of its schema changes behind. If a migrator crashes while holding the lock, check the migration state before setting `kysely_migration_lock.is_locked` back to `0`.
+- On D1, the lock is a row in the database. A second migrator started at the same time fails instead of waiting.
+- On Durable Objects, the lock is kept in memory, since only one instance of an object runs at a time. A second migrator waits for the first, then applies whatever is left. Because the lock isn't stored, an object evicted mid-migration can't leave it stuck.
+
+With `ctx.storage`, each run happens in one transaction. D1 and `ctx.storage.sql` don't have transactions, so a migration that fails partway through can leave some of its schema changes behind.
+
+If a migrator on D1 stops while holding the lock, later runs fail until you clear it. Check which migrations were applied, then set `kysely_migration_lock.is_locked` back to `0`, for example with `wrangler d1 execute`.
 
 ## Connection setup and Node usage
 
