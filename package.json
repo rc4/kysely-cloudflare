@@ -35,15 +35,15 @@
     "format:check": "prettier -c .",
     "lint": "oxlint",
     "test:workers": "vitest run --project workers",
-    "test:coverage": "vitest run --project node --coverage",
-    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test:coverage && pnpm test:workers && pnpm build"
+    "test:coverage": "vitest run --coverage",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test:coverage && pnpm build"
   },
   "devDependencies": {
     "@arethetypeswrong/core": "^0.18.5",
     "@cloudflare/vitest-plugin": "^1.4.5",
     "@cloudflare/workers-types": "^5.20261019.1",
     "@types/node": "^26.6.5",
-    "@vitest/coverage-v8": "^4.1.12",
+    "@vitest/coverage-v8": "^5.0.5",
     "bumpp": "^12.3.0",
     "kysely": "^0.29.7",
     "miniflare": "5.20260930.0-alpha",
@@ -53,7 +53,7 @@
     "publint": "^0.3.25",
     "tsdown": "^0.23.1",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.12"
+    "vitest": "^5.0.5"
   },
   "peerDependencies": {
     "kysely": "^0.29.0"
