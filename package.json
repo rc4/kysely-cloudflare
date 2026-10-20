@@ -59,7 +59,7 @@
     "vitest": "^4.1.11"
   },
   "peerDependencies": {
-    "kysely": "^0.29.6"
+    "kysely": "^0.29.0"
   },
   "engines": {
     "node": ">=22.12.0"

@@ -12,7 +12,7 @@ I use both D1 and Durable Objects, and didn't want to maintain two nearly identi
 pnpm add kysely kysely-cloudflare
 ```
 
-Requires Kysely `^0.29.6` and Node 22.12 or newer.
+Requires Kysely `^0.29.0` and Node 22.12 or newer.
 
 ## D1
 
