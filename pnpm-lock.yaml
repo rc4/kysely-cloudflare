@@ -184,9 +184,6 @@ importers:
       bumpp:
         specifier: ^12.3.0
         version: 12.3.0
-      esbuild:
-        specifier: 0.28.2
-        version: 0.28.2
       kysely:
         specifier: ^0.29.6
         version: 0.29.6
