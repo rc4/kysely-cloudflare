@@ -19,10 +19,7 @@
     "url": "git+https://github.com/rc4/kysely-cloudflare.git"
   },
   "exports": {
-    ".": {
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.cjs"
-    },
+    ".": "./dist/index.mjs",
     "./package.json": "./package.json"
   },
   "files": [
@@ -64,9 +61,7 @@
   "engines": {
     "node": ">=22.12.0"
   },
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.mjs",
-  "types": "./dist/index.d.cts",
+  "types": "./dist/index.d.mts",
   "sideEffects": false,
   "packageManager": "pnpm@12.14.0"
 }
