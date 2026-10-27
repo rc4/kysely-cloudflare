@@ -6,4 +6,7 @@ export default defineConfig({
   sourcemap: true,
   publint: true,
   attw: { profile: 'esm-only', level: 'error' },
+  dts: {
+    generator: 'oxc',
+  },
 });
