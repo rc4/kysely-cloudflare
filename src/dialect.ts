@@ -38,8 +38,9 @@ class CloudflareAdapter extends SqliteAdapter {
     return database !== undefined && isStorage(database);
   }
 
-  // The driver serializes connections itself. Kysely's single-connection mutex
-  // isn't released when a controlled transaction fails to start.
+  // The driver serializes connections itself. Kysely's connection mutex is held
+  // for the whole db.connection() callback, so any nested query that needs
+  // another connection (e.g. db.transaction() inside db.connection()) deadlocks.
   override get supportsMultipleConnections(): boolean {
     return true;
   }
