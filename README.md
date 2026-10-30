@@ -80,6 +80,8 @@ Neither binding can stream results, so `stream()` loads the whole result and the
 
 For queries built with Kysely, affected-row counts don't include rows written by triggers. The bindings' own counts (D1's `meta.changes` and Durable Objects' `rowsWritten`) do, so the dialect asks SQLite's `changes()` instead. On D1, that means each insert, update, or delete runs in a batch with one extra statement.
 
+Raw statements can't get this treatment: the dialect doesn't know a raw statement writes until it runs, and a follow-up `select changes()` isn't safe on D1 — another query could run in between. A raw write therefore counts trigger rows on D1 but not on Durable Objects, where `changes()` still runs. If the count matters, build the query.
+
 `insertId` is only set for queries that are built with `insertInto()`.
 
 Parameters can be strings, numbers, `null`, booleans (stored as `0` or `1`), bigints within the safe integer range, or binary data (`ArrayBuffer`, `Uint8Array`, `DataView`, or Node `Buffer`). Anything else throws, including dates, `undefined`, `NaN`, and `Infinity`. Results come back exactly as the binding returns them.
@@ -141,6 +143,8 @@ const dialect = new CloudflareDialect({
 ```
 
 `database` can also be a function, which runs before the first query. If it or `onCreateConnection` throws, the next query tries again. Inside the hook, run queries through `connection`: querying `db` there deadlocks.
+
+PRAGMAs set in the hook apply to later queries on Durable Objects, but not on D1, where a PRAGMA only affects the transaction that sets it.
 
 `db.destroy()` rolls back any open transaction.
 
