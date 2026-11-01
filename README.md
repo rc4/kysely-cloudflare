@@ -1,6 +1,8 @@
 # kysely-cloudflare
 
-A [Kysely](https://kysely.dev) dialect for [Cloudflare D1](https://developers.cloudflare.com/d1/) and [SQLite-backed Durable Objects](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/). Pass either binding to `CloudflareDialect`.
+A [Kysely](https://kysely.dev) dialect for [Cloudflare D1](https://developers.cloudflare.com/d1/) and [SQLite-backed Durable Objects](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/).
+
+`CloudflareDialect` will automagically handle whichever type of binding you pass it. If you want to ensure a specific type (and have TypeScript check it), you can use `D1Dialect` or `DurableObjectDialect` explicitly instead.
 
 ## Why another package?
 
@@ -35,7 +37,7 @@ const cat = await db
   .executeTakeFirstOrThrow();
 ```
 
-You can also pass a D1 session, such as `env.DB.withSession('first-primary')`. The dialect doesn't track session bookmarks for you.
+You can also pass a D1 session, such as `env.DB.withSession('first-primary')`, though the dialect won't track session bookmarks for you.
 
 ## Durable Objects
 
@@ -61,9 +63,7 @@ export class Cats extends DurableObject {
 
 Pass `this.ctx.storage` if you need transactions or `batch()`. Passing `this.ctx.storage.sql` also works, just without those two features.
 
-If you want TypeScript to catch a mistaken binding, use `D1Dialect` or `DurableObjectDialect` to explicitly specify the correct type. They work just like `CloudflareDialect`, which determines the type of binding you provided automatically and uses the matching dialect.
-
-## Functionality
+## Supported features
 
 Queries compile with Kysely's SQLite compiler. Other features depend on the binding:
 
@@ -80,11 +80,18 @@ Neither binding can stream results, so `stream()` loads the whole result and the
 
 For queries built with Kysely, affected-row counts don't include rows written by triggers. The bindings' own counts (D1's `meta.changes` and Durable Objects' `rowsWritten`) do, so the dialect asks SQLite's `changes()` instead. On D1, that means each insert, update, or delete runs in a batch with one extra statement.
 
-Raw statements can't get this treatment: the dialect doesn't know a raw statement writes until it runs, and a follow-up `select changes()` isn't safe on D1 — another query could run in between. A raw write therefore counts trigger rows on D1 but not on Durable Objects, where `changes()` still runs. If the count matters, build the query.
+Raw statements are a little trickier: the dialect doesn't know a statement writes until it runs, and a follow-up `select changes()` isn't safe on D1 - another query could run in between. A raw write therefore counts trigger rows on D1 but not on Durable Objects, where `changes()` still runs. If the count matters, build the query.
 
-`insertId` is only set for queries that are built with `insertInto()`.
+You'll only get an `insertId` for queries built with `insertInto()`.
 
-Parameters can be strings, numbers, `null`, booleans (stored as `0` or `1`), bigints within the safe integer range, or binary data (`ArrayBuffer`, `Uint8Array`, `DataView`, or Node `Buffer`). Anything else throws, including dates, `undefined`, `NaN`, and `Infinity`. Results come back exactly as the binding returns them.
+You can pass these parameter types:
+
+- Strings, numbers, and `null`
+- Booleans (stored as `0` or `1`)
+- Bigints within the safe integer range
+- Binary data: `ArrayBuffer`, `Uint8Array`, `DataView`, or Node `Buffer`
+
+Anything else throws, including dates, `undefined`, `NaN`, and `Infinity`. Results come back exactly as the binding returns them.
 
 ### Transactions
 
@@ -101,8 +108,6 @@ Create one Kysely instance per Durable Object. The dialect makes its own queries
 
 You can leave the isolation level unset or set it to `serializable`. Other isolation levels, access modes, and savepoints aren't supported.
 
-If a transaction fails to start inside `db.connection()`, you can keep using that connection.
-
 ### Atomic batches
 
 ```ts
@@ -114,7 +119,7 @@ const [inserted, selected] = await batch(db, [
 ] as const);
 ```
 
-Build the queries from the same `db` you pass to `batch()` so its plugins apply, and compile raw SQL with `.compile(db)`. You get back one `QueryResult` per query, in order.
+Make sure you build the queries from the same `db` you pass to `batch()`, so its plugins apply. For raw SQL, use `.compile(db)`. You'll get one `QueryResult` back per query, in order.
 
 Result plugins run after the batch commits, so a plugin that throws can't undo the batch unless it ran inside a transaction. The batch's statements also don't appear in Kysely's query log.
 
@@ -142,11 +147,11 @@ const dialect = new CloudflareDialect({
 });
 ```
 
-`database` can also be a function, which runs before the first query. If it or `onCreateConnection` throws, the next query tries again. Inside the hook, run queries through `connection`: querying `db` there deadlocks.
+You can also pass a function as `database`; it'll run before the first query. If it or `onCreateConnection` throws, the next query tries again. Inside the hook, make sure to use `connection` for queries - querying `db` there will deadlock.
 
 PRAGMAs set in the hook apply to later queries on Durable Objects, but not on D1, where a PRAGMA only affects the transaction that sets it.
 
-`db.destroy()` rolls back any open transaction.
+If a transaction fails to start inside `db.connection()`, you can keep using that connection. `db.destroy()` rolls back any open transaction.
 
 To use the dialect in Node, get a binding from Miniflare, such as `await mf.getD1Database('DB')`.
 
