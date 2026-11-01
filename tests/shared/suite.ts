@@ -13,6 +13,10 @@ import { jsonArrayFrom } from 'kysely/helpers/sqlite';
 import { describe, expect, test } from 'vitest';
 import { batch } from '../../src';
 
+// Defined in vitest.config.ts; only kysely >=0.29 can migrate inside an
+// existing transaction.
+declare const KYESELY_MIGRATOR_RUNS_IN_EXISTING_TRANSACTIONS: boolean;
+
 export interface TestDatabase {
   cats: {
     id: Generated<number>;
@@ -426,33 +430,36 @@ export function databaseSuite(
           expect(await db.selectFrom('cats').selectAll().execute()).toEqual([]);
         }));
 
-      test('migrations can participate in an existing Durable Object transaction', async () =>
-        run(async (db) => {
-          await expect(
-            db.transaction().execute(async (trx) => {
-              const migrator = new Migrator({
-                db: trx,
-                provider: {
-                  getMigrations: async () => ({
-                    '001': {
-                      up: async (migrationDb: Kysely<any>) => {
-                        await migrationDb.schema
-                          .createTable('extra')
-                          .addColumn('id', 'integer')
-                          .execute();
+      test.runIf(KYESELY_MIGRATOR_RUNS_IN_EXISTING_TRANSACTIONS)(
+        'migrations can participate in an existing Durable Object transaction',
+        async () =>
+          run(async (db) => {
+            await expect(
+              db.transaction().execute(async (trx) => {
+                const migrator = new Migrator({
+                  db: trx,
+                  provider: {
+                    getMigrations: async () => ({
+                      '001': {
+                        up: async (migrationDb: Kysely<any>) => {
+                          await migrationDb.schema
+                            .createTable('extra')
+                            .addColumn('id', 'integer')
+                            .execute();
+                        },
                       },
-                    },
-                  }),
-                },
-              });
-              expect((await migrator.migrateToLatest()).error).toBeUndefined();
-              throw new Error('outer rollback');
-            }),
-          ).rejects.toThrow('outer rollback');
-          expect((await db.introspection.getTables()).some((table) => table.name === 'extra')).toBe(
-            false,
-          );
-        }));
+                    }),
+                  },
+                });
+                expect((await migrator.migrateToLatest()).error).toBeUndefined();
+                throw new Error('outer rollback');
+              }),
+            ).rejects.toThrow('outer rollback');
+            expect(
+              (await db.introspection.getTables()).some((table) => table.name === 'extra'),
+            ).toBe(false);
+          }),
+      );
 
       test('an outside query waits until a transaction rolls back', async () =>
         run(async (db) => {
