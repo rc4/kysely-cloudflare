@@ -5,7 +5,10 @@ import {
   type Kysely,
   type TableMetadata,
 } from 'kysely';
-import { DEFAULT_MIGRATION_LOCK_TABLE, DEFAULT_MIGRATION_TABLE } from 'kysely/migration';
+
+// The kysely defaults, but no import site typechecks on both 0.28 and 0.29
+const DEFAULT_MIGRATION_TABLE = 'kysely_migration';
+const DEFAULT_MIGRATION_LOCK_TABLE = 'kysely_migration_lock';
 
 interface ColumnInfo {
   name: string;
@@ -29,6 +32,10 @@ export class CloudflareIntrospector implements DatabaseIntrospector {
 
   async getSchemas() {
     return [];
+  }
+
+  async getMetadata(options?: DatabaseMetadataOptions): Promise<{ tables: TableMetadata[] }> {
+    return { tables: await this.getTables(options) };
   }
 
   async getTables(options?: DatabaseMetadataOptions): Promise<TableMetadata[]> {
@@ -65,6 +72,8 @@ export class CloudflareIntrospector implements DatabaseIntrospector {
           .execute(this.#db);
         rowidAlias = !indexes.some((index) => index.origin === 'pk');
       }
+      // isForeign is required by 0.29's TableMetadata but unknown to
+      // 0.28's, so the literal needs a cast to satisfy both.
       tables.push({
         name: row.name,
         isView: row.type === 'view',
@@ -79,7 +88,7 @@ export class CloudflareIntrospector implements DatabaseIntrospector {
             // hidden is 2 or 3 for generated columns, which can't be inserted.
             hasDefaultValue: column.dflt_value !== null || column.hidden > 1,
           })),
-      });
+      } as TableMetadata);
     }
     return tables;
   }
