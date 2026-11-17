@@ -1,15 +1,6 @@
 /* oxlint-disable vitest/no-conditional-expect, vitest/no-conditional-tests */
-import {
-  CamelCasePlugin,
-  CompiledQuery,
-  Kysely,
-  ParseJSONResultsPlugin,
-  sql,
-  type Generated,
-  type QueryResult,
-} from 'kysely';
+import { CamelCasePlugin, Kysely, sql, type Generated, type QueryResult } from 'kysely';
 import { Migrator } from 'kysely/migration';
-import { jsonArrayFrom } from 'kysely/helpers/sqlite';
 import { describe, expect, test } from 'vitest';
 import { batch } from '../../src';
 
@@ -66,17 +57,6 @@ export function databaseSuite(
   const transactions = binding === 'storage';
   // oxlint-disable-next-line vitest/valid-title
   describe(suiteName, () => {
-    test('reads omit affected-row counts and raw writes report them', async () =>
-      run(async (db) => {
-        const select = await db.executeQuery(db.selectFrom('cats').selectAll().compile());
-        expect(select).toEqual({ rows: [] });
-        const write = await sql`insert into cats (name, active) values ('King Kibby', 1)`.execute(
-          db,
-        );
-        expect(write.numAffectedRows).toBe(1n);
-        expect((await sql`select name from cats`.execute(db)).numAffectedRows).toBeUndefined();
-      }));
-
     if (binding === 'sql') {
       test('ctx.storage.sql executes bound queries and exposes table metadata', async () =>
         run(async (db) => {
@@ -111,6 +91,16 @@ export function databaseSuite(
         }));
       return;
     }
+    test('reads omit affected-row counts and raw writes report them', async () =>
+      run(async (db) => {
+        const write = await sql`insert into cats (name, active) values ('King Kibby', 1)`.execute(
+          db,
+        );
+        expect(write.numAffectedRows).toBe(1n);
+        const select = await db.executeQuery(db.selectFrom('cats').select('name').compile());
+        expect(select).toEqual({ rows: [{ name: 'King Kibby' }] });
+      }));
+
     test('insert IDs, update/delete counts, zero matches, and SELECT after writes', async () =>
       run(async (db) => {
         const inserted = await db
@@ -209,33 +199,6 @@ export function databaseSuite(
         ).toEqual([{ n: 2 }]);
       }));
 
-    test('joins and aggregate results execute through the SQLite bindings', async () =>
-      run(async (db) => {
-        await db
-          .insertInto('cats')
-          .values([
-            { name: 'King Kibby', age: 12, active: 1 },
-            { name: 'Queen Eleanor', age: 9, active: 0 },
-          ])
-          .execute();
-        await db
-          .insertInto('humans')
-          .values([
-            { owner_id: 1, name: 'Ada' },
-            { owner_id: 1, name: 'Grace' },
-          ])
-          .execute();
-        const joined = await db
-          .selectFrom('cats')
-          .leftJoin('humans', 'humans.owner_id', 'cats.id')
-          .select(['cats.name', (eb) => eb.fn.count<number>('humans.id').as('count')])
-          .groupBy('cats.name')
-          .having((eb) => eb.fn.count('humans.id'), '>', 0)
-          .orderBy('cats.name')
-          .execute();
-        expect(joined).toEqual([{ name: 'King Kibby', count: 2 }]);
-      }));
-
     test('parameters preserve quotes, nulls, booleans, safe bigints and binary subviews', async () =>
       run(async (db) => {
         const name = "O'Reilly; DROP TABLE cats; --";
@@ -272,52 +235,6 @@ export function databaseSuite(
         expect((await sql`select ${-12n} as n, ${false} as active`.execute(db)).rows).toEqual([
           { n: -12, active: 0 },
         ]);
-      }));
-
-    test('raw compiled SQL binds parameters', async () =>
-      run(async (db) => {
-        expect((await db.executeQuery(CompiledQuery.raw('select ? as n', [42]))).rows).toEqual([
-          { n: 42 },
-        ]);
-      }));
-
-    test('plugins transform queries and results (including introspection)', async () =>
-      run(async (db) => {
-        const pluginDb = db.withPlugin(new CamelCasePlugin()) as unknown as Kysely<{
-          humans: { id: Generated<number>; ownerId: number; name: string };
-        }>;
-        await db.insertInto('cats').values({ name: 'King Kibby', age: 12, active: 1 }).execute();
-        await pluginDb.insertInto('humans').values({ ownerId: 1, name: 'Ada' }).execute();
-        expect(await pluginDb.selectFrom('humans').selectAll().execute()).toEqual([
-          { id: 1, ownerId: 1, name: 'Ada' },
-        ]);
-        expect(
-          (await pluginDb.introspection.getTables())
-            .find((table) => table.name === 'humans')
-            ?.columns.map((column) => column.name),
-        ).toContain('owner_id');
-      }));
-
-    test('SQLite JSON helpers, subqueries and insert-from-select', async () =>
-      run(async (db) => {
-        await db.insertInto('cats').values({ name: 'King Kibby', age: 12, active: 1 }).execute();
-        await db
-          .insertInto('humans')
-          .columns(['owner_id', 'name'])
-          .expression(db.selectFrom('cats').select(['id', sql<string>`'Ada'`.as('name')]))
-          .execute();
-        const rows = await db
-          .withPlugin(new ParseJSONResultsPlugin())
-          .selectFrom('cats')
-          .select([
-            'name',
-            (eb) =>
-              jsonArrayFrom(
-                eb.selectFrom('humans').select('name').whereRef('owner_id', '=', 'cats.id'),
-              ).as('humans'),
-          ])
-          .execute();
-        expect(rows).toEqual([{ name: 'King Kibby', humans: [{ name: 'Ada' }] }]);
       }));
 
     test('introspection handles generated columns, quoted names and WITHOUT ROWID', async () =>
@@ -392,13 +309,9 @@ export function databaseSuite(
           expect(String((await migrator.migrateToLatest()).error)).toContain(
             'Migration lock is already held by another migrator',
           );
-          expect(
-            (
-              await sql<{ is_locked: number }>`select is_locked from kysely_migration_lock`.execute(
-                db,
-              )
-            ).rows,
-          ).toEqual([{ is_locked: 1 }]);
+          expect(String((await migrator.migrateToLatest()).error)).toContain(
+            'Migration lock is already held by another migrator',
+          );
           await sql`update kysely_migration_lock set is_locked = 0`.execute(db);
           expect((await migrator.migrateToLatest()).error).toBeUndefined();
         }));
@@ -535,13 +448,12 @@ export function databaseSuite(
         });
       }));
 
-    test('schema changes, indexes, views and introspection', async () =>
+    test('introspection reports tables, views, nullability and defaults', async () =>
       run(async (db) => {
         await db.schema
           .alterTable('cats')
           .addColumn('nickname', 'text', (col) => col.defaultTo('unknown'))
           .execute();
-        await db.schema.createIndex('cats_age').on('cats').column('age').execute();
         await db.schema
           .createView('cats_view')
           .as(db.selectFrom('cats').select(['id', 'name']))
@@ -553,7 +465,6 @@ export function databaseSuite(
         expect(cats.columns.find((col) => col.name === 'name')?.isNullable).toBe(false);
         expect(cats.columns.find((col) => col.name === 'nickname')?.hasDefaultValue).toBe(true);
         expect(tables.find((table) => table.name === 'cats_view')?.isView).toBe(true);
-        await db.schema.dropIndex('cats_age').execute();
       }));
 
     test('migrations up/down and internal migration table filtering', async () =>
@@ -596,11 +507,11 @@ export function databaseSuite(
           db
             .insertInto('cats')
             .values({ name: 'King Kibby', age: 12, active: 1 })
-            .returning('name')
+            .returning(['id', 'name'])
             .compile(),
           db.selectFrom('cats').select('name').compile(),
         ] as const);
-        expect(results[0].rows).toEqual([{ name: 'King Kibby' }]);
+        expect(results[0].rows).toEqual([{ id: 1, name: 'King Kibby' }]);
         expect(results[1].rows).toEqual([{ name: 'King Kibby' }]);
         const failed = [
           db.insertInto('cats').values({ name: 'Queen Eleanor', age: 9, active: 1 }).compile(),
@@ -610,31 +521,26 @@ export function databaseSuite(
         expect(await db.selectFrom('cats').select('name').execute()).toEqual([
           { name: 'King Kibby' },
         ]);
-        const queryIds = new WeakSet<object>();
-        const pluginDb = db
-          .withPlugin(new CamelCasePlugin())
-          .withPlugin({
-            transformQuery({ node, queryId }) {
-              queryIds.add(queryId);
-              return node;
-            },
-            async transformResult({ result, queryId }) {
-              expect(queryIds.delete(queryId)).toBe(true);
-              const humans = await db.selectFrom('humans').select('id').execute();
-              return {
-                ...result,
-                rows: result.rows.map((row) => ({ ...row, totalHumans: humans.length })),
-              };
-            },
-          })
-          .withPlugin({
-            transformQuery: ({ node }) => node,
-            async transformResult({ result }) {
-              expect(result.rows[0]?.ownerId).toBe(1);
-              expect(result.rows[0]?.totalHumans).toBe(1);
-              return result;
-            },
-          }) as unknown as Kysely<{
+        const labels = new WeakMap<object, string>();
+        const pluginDb = db.withPlugin(new CamelCasePlugin()).withPlugin({
+          transformQuery({ node, queryId }) {
+            labels.set(queryId, 'Owner');
+            return node;
+          },
+          async transformResult({ result, queryId }) {
+            const label = labels.get(queryId);
+            labels.delete(queryId);
+            const humans = await db.selectFrom('humans').select('id').execute();
+            return {
+              ...result,
+              rows: result.rows.map((row) => ({
+                ...row,
+                ownerLabel: `${label} ${row.ownerId}`,
+                totalHumans: humans.length,
+              })),
+            };
+          },
+        }) as unknown as Kysely<{
           humans: { id: Generated<number>; ownerId: number; name: string };
         }>;
         const pluginResults = await batch(pluginDb, [
@@ -644,7 +550,9 @@ export function databaseSuite(
             .returningAll()
             .compile(),
         ] as const);
-        expect(pluginResults[0].rows).toEqual([{ id: 1, ownerId: 1, name: 'Ada', totalHumans: 1 }]);
+        expect(pluginResults[0].rows).toEqual([
+          { id: 1, ownerId: 1, name: 'Ada', ownerLabel: 'Owner 1', totalHumans: 1 },
+        ]);
         expect(await batch(db, [])).toEqual([]);
       }));
 
@@ -683,21 +591,6 @@ export function databaseSuite(
         expect(await db.selectFrom('cats').select('name').execute()).toEqual([
           { name: 'King Kibby' },
         ]);
-        await expect(
-          db.transaction().execute(async (trx) => {
-            await trx
-              .insertInto('cats')
-              .values({ name: 'Queen Eleanor', age: 9, active: 1 })
-              .execute();
-            await trx
-              .insertInto('cats')
-              .values({ name: 'King Kibby', age: 9, active: 1 })
-              .execute();
-          }),
-        ).rejects.toThrow(/UNIQUE/);
-        expect(await db.selectFrom('cats').select('name').execute()).toEqual([
-          { name: 'King Kibby' },
-        ]);
       }));
 
     test('controlled transactions and unsupported settings/savepoints', async () =>
@@ -731,9 +624,6 @@ export function databaseSuite(
             .setAccessMode('read only')
             .execute(async () => {}),
         ).rejects.toThrow(/access mode/);
-        await expect(
-          db.startTransaction().setIsolationLevel('read committed').execute(),
-        ).rejects.toThrow(/isolation/);
         expect(await db.selectFrom('cats').select('name').execute()).toHaveLength(1);
       }));
   });

@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
-import { Kysely } from 'kysely';
+import { Kysely, sql } from 'kysely';
+import { Migrator } from 'kysely/migration';
 import { expect, test } from 'vitest';
 import { batch, CloudflareDialect, D1Dialect, DurableObjectDialect } from '../../src';
 import { createSchema, databaseSuite, type TestDatabase } from '../shared/suite';
@@ -36,6 +37,38 @@ test('D1 sessions support bound reads and atomic mutations with result metadata'
       await db.selectFrom('cats').select('age').where('name', '=', 'King Kibby').execute(),
     ).toEqual([{ age: 12 }]);
   } finally {
+    await db.destroy();
+  }
+});
+
+test('D1 migrations use custom history and lock tables', async () => {
+  const db = new Kysely<TestDatabase>({
+    dialect: new CloudflareDialect({ database: env.DB }),
+  });
+  try {
+    await createSchema(db);
+    const migrator = new Migrator({
+      db,
+      migrationTableName: 'history',
+      migrationLockTableName: 'history_lock',
+      provider: {
+        getMigrations: async () => ({
+          '001': {
+            up: async (migrationDb: Kysely<any>) => {
+              await migrationDb.schema.createTable('extra').addColumn('id', 'integer').execute();
+            },
+          },
+        }),
+      },
+    });
+    expect((await migrator.migrateToLatest()).error).toBeUndefined();
+    expect((await sql`select name from history`.execute(db)).rows).toEqual([{ name: '001' }]);
+    expect((await sql`select is_locked from history_lock`.execute(db)).rows).toEqual([
+      { is_locked: 0 },
+    ]);
+  } finally {
+    await db.schema.dropTable('history').ifExists().execute();
+    await db.schema.dropTable('history_lock').ifExists().execute();
     await db.destroy();
   }
 });
