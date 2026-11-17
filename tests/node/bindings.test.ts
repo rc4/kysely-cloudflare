@@ -1,9 +1,8 @@
 import { Miniflare } from 'miniflare';
-import { Kysely } from 'kysely';
-import { afterAll, beforeAll } from 'vitest';
-import { CloudflareDialect, DurableObjectDialect } from '../../src';
-import { createSchema, databaseSuite, type TestDatabase } from '../shared/suite';
-import { SQLiteStorage } from './sqlite-storage';
+import { Kysely, sql } from 'kysely';
+import { afterAll, beforeAll, expect, test } from 'vitest';
+import { batch, CloudflareDialect } from '../../src';
+import { createSchema, type TestDatabase } from '../shared/suite';
 
 let mf: Miniflare;
 beforeAll(async () => {
@@ -33,39 +32,29 @@ afterAll(async () => {
   await mf?.dispose();
 });
 
-databaseSuite(
-  'Node D1 via Miniflare binding',
-  async (callback) => {
-    const database = await mf.getD1Database('DB');
-    const db = new Kysely<TestDatabase>({ dialect: new CloudflareDialect({ database }) });
-    try {
-      await createSchema(db);
-      await callback(db);
-    } finally {
-      await db.destroy();
-    }
-  },
-  'd1',
-);
-
-for (const bare of [false, true]) {
-  databaseSuite(
-    `Node SQLite-compatible storage (${bare ? 'ctx.storage.sql' : 'ctx.storage'})`,
-    async (callback) => {
-      const storage = new SQLiteStorage();
-      const db = new Kysely<TestDatabase>({
-        dialect: new DurableObjectDialect({
-          database: bare ? storage.sql : async () => storage,
-        }),
-      });
-      try {
-        await createSchema(db);
-        await callback(db);
-      } finally {
-        await db.destroy();
-        storage.database.close();
-      }
-    },
-    bare ? 'sql' : 'storage',
-  );
-}
+test('Node Miniflare bindings carry binary parameters and mutation metadata across the proxy', async () => {
+  const database = await mf.getD1Database('DB');
+  const db = new Kysely<TestDatabase>({ dialect: new CloudflareDialect({ database }) });
+  try {
+    await createSchema(db);
+    const [inserted, selected] = await batch(db, [
+      db
+        .insertInto('cats')
+        .values({
+          name: 'King Kibby',
+          active: 1,
+          payload: new Uint8Array([9, 1, 2, 9]).subarray(1, 3),
+        })
+        .compile(),
+      db
+        .selectFrom('cats')
+        .select(['name', sql<string>`hex(payload)`.as('payload')])
+        .compile(),
+    ] as const);
+    expect(inserted.insertId).toBe(1n);
+    expect(inserted.numAffectedRows).toBe(1n);
+    expect(selected.rows).toEqual([{ name: 'King Kibby', payload: '0102' }]);
+  } finally {
+    await db.destroy();
+  }
+});

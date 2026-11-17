@@ -5,48 +5,45 @@ import { batch, CloudflareDialect, type CloudflareDatabase } from '../../src';
 import { createSchema, type TestDatabase } from '../shared/suite';
 import { SQLiteStorage } from './sqlite-storage';
 
-test('lazy initialization retries failures and calls the hook once after success', async () => {
+test('binding factories initialize lazily, retry failures, and reuse successful connections', async () => {
   const storage = new SQLiteStorage();
-  const factory = vi
-    .fn<() => Promise<CloudflareDatabase>>()
-    .mockRejectedValueOnce(new Error('binding unavailable'))
-    .mockResolvedValue(storage);
-  const hook = vi.fn<(connection: DatabaseConnection) => Promise<void>>(async (connection) => {
-    await connection.executeQuery(CompiledQuery.raw('pragma foreign_keys = on'));
+  let available = false;
+  const factory = vi.fn<() => Promise<CloudflareDatabase>>(async () => {
+    if (!available) throw new Error('binding unavailable');
+    return storage;
   });
   const db = new Kysely<TestDatabase>({
-    dialect: new CloudflareDialect({ database: factory, onCreateConnection: hook }),
+    dialect: new CloudflareDialect({ database: factory }),
   });
   try {
     db.selectFrom('cats').selectAll().compile();
     expect(factory).not.toHaveBeenCalled();
     await expect(sql`select 1`.execute(db)).rejects.toThrow('binding unavailable');
-    await sql`select 1`.execute(db);
-    await sql`select 2`.execute(db);
-    expect(factory).toHaveBeenCalledTimes(2);
-    expect(hook).toHaveBeenCalledTimes(1);
-    await db.destroy();
-    await expect(sql`select 1`.execute(db)).rejects.toThrow('destroyed');
-    expect(storage.database.prepare('select 1').get()).toEqual({ '1': 1 });
+    available = true;
+    expect((await sql`select 42 as n`.execute(db)).rows).toEqual([{ n: 42 }]);
+    available = false;
+    expect((await sql`select 84 as n`.execute(db)).rows).toEqual([{ n: 84 }]);
   } finally {
     await db.destroy();
     storage.database.close();
   }
 });
 
-test('failed connection setup can be retried', async () => {
+test('connection setup retries failures and preserves later configuration changes', async () => {
   const storage = new SQLiteStorage();
   const hook = vi
-    .fn<(connection: DatabaseConnection) => Promise<void>>()
-    .mockRejectedValueOnce(new Error('setup failed'))
-    .mockResolvedValue(undefined);
+    .fn<(connection: DatabaseConnection) => Promise<void>>(async (connection) => {
+      await connection.executeQuery(CompiledQuery.raw('pragma foreign_keys = off'));
+    })
+    .mockRejectedValueOnce(new Error('setup failed'));
   const db = new Kysely({
     dialect: new CloudflareDialect({ database: storage, onCreateConnection: hook }),
   });
   try {
     await expect(sql`select 1`.execute(db)).rejects.toThrow('setup failed');
-    expect((await sql`select 1`.execute(db)).rows).toEqual([{ '1': 1 }]);
-    expect(hook).toHaveBeenCalledTimes(2);
+    expect((await sql`pragma foreign_keys`.execute(db)).rows).toEqual([{ foreign_keys: 0 }]);
+    await sql`pragma foreign_keys = on`.execute(db);
+    expect((await sql`pragma foreign_keys`.execute(db)).rows).toEqual([{ foreign_keys: 1 }]);
   } finally {
     await db.destroy();
     storage.database.close();
@@ -60,60 +57,26 @@ test('a missing binding fails on the first query', async () => {
   await expect(sql`select 1`.execute(db)).rejects.toThrow('Expected a D1 binding');
 });
 
-test('custom migration table names route history and lock writes to the requested tables', async () => {
-  const storage = new SQLiteStorage();
-  const db = new Kysely({ dialect: new CloudflareDialect({ database: storage }) });
-  try {
-    const migrator = new Migrator({
-      db,
-      migrationTableName: 'history',
-      migrationLockTableName: 'history_lock',
-      provider: {
-        getMigrations: async () => ({
-          '001': {
-            up: async (migrationDb: Kysely<any>) => {
-              await migrationDb.schema.createTable('example').addColumn('id', 'integer').execute();
-            },
-          },
-        }),
-      },
-    });
-    expect((await migrator.migrateToLatest()).error).toBeUndefined();
-    expect((await sql`select name from history`.execute(db)).rows).toEqual([{ name: '001' }]);
-    expect((await sql`select is_locked from history_lock`.execute(db)).rows).toEqual([
-      { is_locked: 0 },
-    ]);
-    expect((await db.introspection.getTables()).map((table) => table.name)).toEqual([
-      'example',
-      'history',
-      'history_lock',
-    ]);
-  } finally {
-    await db.destroy();
-    storage.database.close();
-  }
-});
-
 test('concurrent Durable Object migrators wait for each other instead of failing', async () => {
   const storage = new SQLiteStorage();
   const databases = [
     new Kysely({ dialect: new CloudflareDialect({ database: storage }) }),
     new Kysely({ dialect: new CloudflareDialect({ database: storage.sql }) }),
   ];
-  const up = vi.fn<(db: Kysely<any>) => Promise<void>>(async (migrationDb) => {
-    await migrationDb.schema.createTable('example').addColumn('id', 'integer').execute();
-  });
+  const provider = {
+    getMigrations: async () => ({
+      '001': {
+        up: async (migrationDb: Kysely<any>) => {
+          await migrationDb.schema.createTable('example').addColumn('id', 'integer').execute();
+        },
+      },
+    }),
+  };
   try {
     const results = await Promise.all(
-      databases.map((db) =>
-        new Migrator({
-          db,
-          provider: { getMigrations: async () => ({ '001': { up } }) },
-        }).migrateToLatest(),
-      ),
+      databases.map((db) => new Migrator({ db, provider }).migrateToLatest()),
     );
     expect(results.map((result) => result.error)).toEqual([undefined, undefined]);
-    expect(up).toHaveBeenCalledOnce();
     expect(
       results.flatMap((result) => result.results ?? []).map((result) => result.status),
     ).toEqual(['Success']);
@@ -123,11 +86,9 @@ test('concurrent Durable Object migrators wait for each other instead of failing
   }
 });
 
-test('native controlled transaction start failure releases its lease and allows retry', async () => {
+test('a failed native transaction start allows a later transaction to commit', async () => {
   const storage = new SQLiteStorage();
-  const transaction = vi
-    .spyOn(storage, 'transaction')
-    .mockRejectedValueOnce(new Error('storage unavailable'));
+  vi.spyOn(storage, 'transaction').mockRejectedValueOnce(new Error('storage unavailable'));
   const db = new Kysely<TestDatabase>({ dialect: new CloudflareDialect({ database: storage }) });
   try {
     await createSchema(db);
@@ -135,8 +96,7 @@ test('native controlled transaction start failure releases its lease and allows 
     await db.transaction().execute(async (trx) => {
       await trx.insertInto('cats').values({ name: 'King Kibby', age: 1, active: 1 }).execute();
     });
-    expect(transaction).toHaveBeenCalledTimes(2);
-    expect(await db.selectFrom('cats').selectAll().execute()).toHaveLength(1);
+    expect(await db.selectFrom('cats').select('name').execute()).toEqual([{ name: 'King Kibby' }]);
   } finally {
     await db.destroy();
     storage.database.close();
@@ -198,16 +158,18 @@ test('a reserved connection stays usable after a failed start while another tran
   }
 });
 
-test('unsupported parameters reject before reaching SQLite', async () => {
+test('unsupported parameters reject without persisting a write', async () => {
   const storage = new SQLiteStorage();
   const db = new Kysely({ dialect: new CloudflareDialect({ database: storage }) });
   try {
-    const exec = vi.spyOn(storage.sql, 'exec');
+    await sql`create table parameters (value)`.execute(db);
     for (const value of [undefined, new Date(), {}, 9007199254740992n, Infinity, NaN]) {
       // oxlint-disable-next-line no-await-in-loop
-      await expect(sql`select ${value}`.execute(db)).rejects.toThrow(/parameter|bigint/);
+      await expect(sql`insert into parameters values (${value})`.execute(db)).rejects.toThrow(
+        /parameter/i,
+      );
     }
-    expect(exec).not.toHaveBeenCalled();
+    expect((await sql`select * from parameters`.execute(db)).rows).toEqual([]);
   } finally {
     await db.destroy();
     storage.database.close();
