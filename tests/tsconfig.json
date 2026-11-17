@@ -1,7 +1,15 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
-    "types": ["node", "@cloudflare/workers-types/experimental", "@cloudflare/vitest-plugin/types"]
+    "types": ["node", "@cloudflare/workers-types/experimental", "@cloudflare/vitest-plugin/types"],
+    "paths": {
+      // tsc doesn't see vitest's 'kysely/migration' alias, and kysely 0.28 has
+      // no such subpath, so point at whichever layout is installed.
+      "kysely/migration": [
+        "../node_modules/kysely/dist/migration/migrator.d.ts",
+        "../node_modules/kysely/dist/esm/migration/migrator.d.ts"
+      ]
+    }
   },
   "include": ["**/*.ts", "../vitest.config.ts", "../tsdown.config.ts"]
 }
