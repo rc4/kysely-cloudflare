@@ -46,7 +46,7 @@
     "@vitest/coverage-v8": "^5.0.5",
     "bumpp": "^12.3.0",
     "kysely": "^0.29.7",
-    "miniflare": "5.20261023.2-beta",
+    "miniflare": "5.20261119.0-beta",
     "oxlint": "^1.90.0",
     "prettier": "^3.9.10",
     "prettier-plugin-jsdoc": "^1.8.1",
